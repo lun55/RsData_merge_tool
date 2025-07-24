@@ -1,0 +1,17 @@
+## 安装相关包
+Package                   Version  
+------------------------- --------  
+altgraph                  0.17.4  
+GDAL                      3.6.2  
+packaging                 25.0
+pefile                    2023.2.7  
+pip                       25.1.1  
+pyinstaller               6.14.2  
+pyinstaller-hooks-contrib 2025.7  
+PyQt5                     5.15.11  
+PyQt5-Qt5                 5.15.2  
+PyQt5_sip                 12.17.0  
+pywin32-ctypes            0.2.3  
+setuptools                65.5.0  
+## 打包
+pyinstaller RSData_Merger_Tool.spec
