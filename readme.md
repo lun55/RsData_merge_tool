@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 基于GDAL的遥感影像拼接工具 v1.0
 
 一个基于 [GDAL](https://gdal.org/) 和 [PyQt5](https://www.riverbankcomputing.com/software/pyqt/intro) 的桌面工具，支持将多个遥感影像文件进行自动拼接处理  
@@ -43,3 +44,24 @@ setuptools==65.5.0
 pyinstaller RSData_Merger_Tool.spec
 ```
 
+=======
+# 基于GDAL的遥感影像拼接工具v1.0
+<img width="604" height="985" alt="image" src="https://github.com/user-attachments/assets/8972130b-1845-40d0-8c47-a41008a1672d" />  
+## 安装相关包
+Package                   Version  
+------------------------- --------  
+altgraph                  0.17.4  
+GDAL                      3.6.2  
+packaging                 25.0
+pefile                    2023.2.7  
+pip                       25.1.1  
+pyinstaller               6.14.2  
+pyinstaller-hooks-contrib 2025.7  
+PyQt5                     5.15.11  
+PyQt5-Qt5                 5.15.2  
+PyQt5_sip                 12.17.0  
+pywin32-ctypes            0.2.3  
+setuptools                65.5.0  
+## 打包
+pyinstaller RSData_Merger_Tool.spec
+>>>>>>> 85a65b4aaf85dd0e35c2ccf3ad1147135c16e5db
