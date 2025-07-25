@@ -42,7 +42,7 @@ def build_rtree_index(files: List[str]) -> Tuple[index.Index, List[str]]:
             paths.append(f)
     return rtree_idx, paths
 
-def process_window_rtree(rtree_idx, paths, out_win, out_transform, method, dst_nodata,dtype,resample):
+def process_window_rtree(rtree_idx, paths, out_win, out_transform, method, dst_nodata,dtype):
     win_bounds = rasterio.windows.bounds(out_win, out_transform)
     h, w = out_win.height, out_win.width
     candidate_ids = list(rtree_idx.intersection(win_bounds))
@@ -57,8 +57,8 @@ def process_window_rtree(rtree_idx, paths, out_win, out_transform, method, dst_n
                 src_window = src.window(*win_bounds).round_offsets().round_lengths()
                 arr = src.read(window=src_window,
                                boundless=True,
-                               fill_value=dst_nodata,
-                               resampling=resample)
+                               fill_value=dst_nodata)
+                            #    resampling=resample)
                 arr = arr[:, :h, :w]
                 arrays.append(arr)
             except Exception:
@@ -72,7 +72,7 @@ def process_window_rtree(rtree_idx, paths, out_win, out_transform, method, dst_n
     output = np.empty((bands, h, w), dtype=dtype)
 
     for b in range(bands):
-        band_data = np.ma.masked_equal(stacked[:, b, :, :], dst_nodata)
+        band_data = np.ma.masked_equal(stacked[:, b, :], dst_nodata)
         if method == 'mean':
             output[b] = np.ma.mean(band_data, axis=0).filled(dst_nodata)
         elif method == 'max':
@@ -81,9 +81,22 @@ def process_window_rtree(rtree_idx, paths, out_win, out_transform, method, dst_n
             output[b] = np.ma.min(band_data, axis=0).filled(dst_nodata)
         elif method == 'sum':
             output[b] = np.ma.sum(band_data, axis=0).filled(dst_nodata)
+        elif method == 'first':
+            mask = ~band_data.mask  # shape: (n_files, h, w) -> True 表示有效值
+            # argmax 返回第一个 True 的索引
+            idx = mask.argmax(axis=0)  # shape: (h, w)
+            stacked_data = stacked[:, b, :, :]  # shape: (n_files, h, w)
+            output[b] = np.choose(idx, stacked_data)
+
+        elif method == 'last':
+            mask = ~band_data.mask
+            reversed_mask = np.flip(mask, axis=0)
+            idx = reversed_mask.argmax(axis=0)
+            reversed_data = np.flip(stacked[:, b, :, :], axis=0)
+            output[b] = np.choose(idx, reversed_data)
         else:
             raise ValueError(f"Unsupported method: {method}")
-
+        
     del arrays
     del band_data
     del stacked
@@ -101,7 +114,7 @@ def mosaic_overlap(files: List[str],
                    dst_crs = None,
                    driver: str = 'GTiff',
                    creation_options: List[str] = None,
-                   resample: str = 'nearest',
+                #    resample: str = 'nearest',
                    flush_interval = 100,
                    log = None,
                    error = None,
@@ -190,7 +203,8 @@ def mosaic_overlap(files: List[str],
                                 method,
                                 dst_nodata,
                                 dtype_map.get(dst_dtype, src_dtype),
-                                resample_map.get(resample)): win
+                                # resample_map.get(resample)
+                                ): win
                     for win in windows
                 }
 

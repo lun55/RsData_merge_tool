@@ -43,7 +43,7 @@ class MergeThread(QThread):
                 dst_nodata=self.opts.get('dstNodata'),
                 dst_crs=self.opts.get('dstSRS'),
                 creation_options=self.opts.get('creationOptions', ['COMPRESS=LZW', 'TILED=YES']),
-                resample=self.opts.get('resample', 'nearest'),
+                # resample=self.opts.get('resample', 'nearest'),
                 flush_interval = self.opts.get('flush_interval', 100),
                 log = self.log.emit,  # 日志回调
                 error = self.error.emit,  # 错误回调
@@ -98,7 +98,7 @@ class HDFMergeThread(QThread):
                 dst_nodata=self.opts.get('dstNodata'),
                 dst_crs=self.opts.get('dstSRS'),
                 creation_options=self.opts.get('creationOptions', ['COMPRESS=LZW', 'TILED=YES']),
-                resample=self.opts.get('resample', 'nearest'),
+                # resample=self.opts.get('resample', 'nearest'),
                 flush_interval = self.opts.get('flush_interval', 100),
                 log = self.log.emit,  # 日志回调
                 error = self.error.emit,  # 错误回调
@@ -185,12 +185,12 @@ class MergerUI(QWidget):
         v.addLayout(h_method)
 
         # warp 选项
-        h_warp = QHBoxLayout()
-        h_warp.addWidget(QLabel('重采样算法:'))
-        self.cb_alg = QComboBox()
-        self.cb_alg.addItems(["nearest", "bilinear", "cubic", "average", "max", "min", "mode", "med","q1","q3","sum"])
-        h_warp.addWidget(self.cb_alg)
-        v.addLayout(h_warp)
+        # h_warp = QHBoxLayout()
+        # h_warp.addWidget(QLabel('重采样算法:'))
+        # self.cb_alg = QComboBox()
+        # self.cb_alg.addItems(["nearest", "bilinear", "cubic", "average", "max", "min", "mode", "med","q1","q3","sum"])
+        # h_warp.addWidget(self.cb_alg)
+        # v.addLayout(h_warp)
 
         # 输出像素类型
         h_type = QHBoxLayout()
@@ -394,7 +394,7 @@ class MergerUI(QWidget):
             creation_opts.append('BIGTIFF=YES')
 
         opts = {
-            'resampleAlg': self.cb_alg.currentText(), # 重采样算法
+            # 'resampleAlg': self.cb_alg.currentText(), # 重采样算法
             'block_size': int(self.le_mem.text()), # 分块窗口大小
             'n_workers': int(self.le_work.text()), # 线程数
             'creationOptions': creation_opts, # GDAL 写入选项
