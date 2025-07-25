@@ -6,22 +6,94 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QProgressBar, QCheckBox, QComboBox)
 from PyQt5.QtGui import QIcon
 import shutil
+import xml.etree.ElementTree as ET
+
+def get_nodata_from_vrt(vrt_path: str) -> float:
+    tree = ET.parse(vrt_path)
+    root = tree.getroot()
+    for band in root.findall("VRTRasterBand"):
+        nd = band.find("NoDataValue")
+        if nd is not None:
+            return nd.text
+    return None
+
+
+# Step 0: 定义插入 PixelFunction 的函数
+# Step 0: 定义插入 PixelFunction 的函数
+def add_pixel_fn(filename: str, function_name: str) -> None:
+    nodata = get_nodata_from_vrt(filename)
+    if nodata is None:
+        nodata = -9999
+
+    code = f"""
+    <PixelFunctionType>{function_name}</PixelFunctionType>
+    <PixelFunctionLanguage>Python</PixelFunctionLanguage>
+    <PixelFunctionCode><![CDATA[
+import numpy as np
+
+nodata = {nodata}
+
+def max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    masked = np.ma.masked_equal(in_ar, nodata)
+    result = np.ma.max(masked, axis=0).filled(nodata)
+    np.copyto(out_ar, result)
+
+def min(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    masked = np.ma.masked_equal(in_ar, nodata)
+    result = np.ma.min(masked, axis=0).filled(nodata)
+    np.copyto(out_ar, result)
+
+def mean(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    masked = np.ma.masked_equal(in_ar, nodata)
+    result = np.ma.mean(masked, axis=0).filled(nodata)
+    np.copyto(out_ar, result)
+
+def sum(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    masked = np.ma.masked_equal(in_ar, nodata)
+    result = np.ma.sum(masked, axis=0).filled(nodata)
+    np.copyto(out_ar, result)
+
+def first(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    out_ar[:] = np.where(in_ar[0] == nodata, nodata, in_ar[0])
+
+def last(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt):
+    out_ar[:] = np.where(in_ar[-1] == nodata, nodata, in_ar[-1])
+]]>
+    </PixelFunctionCode>
+    """
+
+    lines = open(filename, 'r').readlines()
+    for i, line in enumerate(lines):
+        if '<VRTRasterBand' in line and 'subClass="VRTDerivedRasterBand"' not in line:
+            lines[i] = line.replace('<VRTRasterBand', '<VRTRasterBand subClass="VRTDerivedRasterBand"')
+        if '<PixelFunctionType>' in line:
+            # Already present, remove old function definition
+            while '</PixelFunctionCode>' not in lines[i]:
+                lines.pop(i)
+            lines.pop(i)  # remove </PixelFunctionCode>
+            break
+
+    insert_index = next(i for i, line in enumerate(lines) if '<VRTRasterBand' in line) + 1
+    lines.insert(insert_index, code + "\n")
+    open(filename, 'w').write("".join(lines))
+
 # ---------- 后台合并线程 ----------
 class MergeThread(QThread):
     log      = pyqtSignal(str)       # 普通日志
     error    = pyqtSignal(str)       # 错误日志
     progress = pyqtSignal(int)       # 0-100
 
-    def __init__(self, asc_files, out_path, opts):
+    def __init__(self, asc_files, out_path, opts,merge_method):
         super().__init__()
         self.asc_files = asc_files
         self.out_path  = out_path
-        self.opts      = opts        # dict 参数
+        self.merge_method = merge_method
+        self.opts = opts        # dict 参数
         
     def run(self):
         try:
             if not self.asc_files:
-                raise RuntimeError("未找到任何 .asc 文件，请检查输入目录")
+                raise RuntimeError("未找到任何文件，请检查输入目录")
                 
             self.log.emit(f"找到 {len(self.asc_files)} 个文件")
 
@@ -36,7 +108,24 @@ class MergeThread(QThread):
             self.log.emit(f"输出路径: {self.out_path}")
             self.log.emit(f"选项: {self.opts}")
             
-            gdal.Warp(self.out_path, self.asc_files, **self.opts,
+
+            # Step 1: 构建 VRT 文件
+            print(f"Found {len(self.asc_files)} input files.")
+            
+            vrt_path = f"{os.path.join(os.path.dirname(self.out_path), os.path.basename(self.out_path))}.vrt"
+            gdal.BuildVRT(vrt_path, self.asc_files)
+            self.opts['dstNodata'] = get_nodata_from_vrt(vrt_path)
+            # Step 2: 插入 PixelFunction（自动根据 VRT 读取 NoData）
+            add_pixel_fn(vrt_path, self.merge_method)
+
+            # Step 3: 应用 Python PixelFunction 并导出为 GeoTIFF
+            gdal.SetConfigOption('GDAL_VRT_ENABLE_PYTHON', 'YES')
+            ds = gdal.Open(vrt_path)
+
+            if ds is None:
+                raise RuntimeError("Failed to open the VRT dataset. Check if PixelFunction is valid.")
+
+            gdal.Warp(self.out_path, ds, **self.opts,
                     callback=_progress)
             # ✅ 关键：刷新缓存并关闭
             out_ds = gdal.Open(self.out_path, gdal.GA_Update)
@@ -55,14 +144,14 @@ class HDFMergeThread(QThread):
     error = pyqtSignal(str)
     progress = pyqtSignal(int)
 
-    def __init__(self, hdf_files, out_path, opts, temp_dir, subdataset_index):
+    def __init__(self, hdf_files, out_path, opts, temp_dir, subdataset_index, merge_method):
         super().__init__()
         self.hdf_files = hdf_files
         self.out_path = out_path
         self.opts = opts
         self.temp_dir = temp_dir
         self.subdataset_index = subdataset_index
-
+        self.merge_method = merge_method
     def run(self):
         try:
             if not self.hdf_files:
@@ -87,24 +176,40 @@ class HDFMergeThread(QThread):
             self.log.emit(f"找到 {len(asc_files)} 个文件")
             self.log.emit(f"输出路径: {self.out_path}")
             self.log.emit(f"选项: {self.opts}")
-            if asc_files:
 
-                def _progress(pct, msg, data):
-                    self.progress.emit(int(pct * 100))
-                    return 1
-                
-                gdal.Warp(self.out_path, asc_files, **self.opts,
-                        callback=_progress)
-                # ✅ 关键：刷新缓存并关闭
-                out_ds = gdal.Open(self.out_path, gdal.GA_Update)
-                if out_ds:
-                    out_ds.FlushCache()  # 强制写盘
-                    out_ds = None 
-                self.progress.emit(100)       # 关闭数据集 
-                self.log.emit(f"✅ 合并完成：{self.out_path}")
-            else:
-                self.error.emit("未找到任何栅格文件进行合并")
+            # Step 1: 构建 VRT 文件
+            print(f"Found {len(asc_files)} input files.")
+            
+            if not asc_files:
+                print("No input .asc files found.")
+                return
+            vrt_path = f"{os.path.join(self.temp_dir, os.path.basename(self.out_path))}.vrt"
+            gdal.BuildVRT(vrt_path, asc_files)
+            self.opts['dstNodata'] = get_nodata_from_vrt(vrt_path)
+            # Step 2: 插入 PixelFunction（自动根据 VRT 读取 NoData）
+            add_pixel_fn(vrt_path, self.merge_method)
 
+            # Step 3: 应用 Python PixelFunction 并导出为 GeoTIFF
+            gdal.SetConfigOption('GDAL_VRT_ENABLE_PYTHON', 'YES')
+            ds = gdal.Open(vrt_path)
+
+            if ds is None:
+                raise RuntimeError("Failed to open the VRT dataset. Check if PixelFunction is valid.")
+
+            def _progress(pct, msg, data):
+                self.progress.emit(int(pct * 100))
+                return 1
+            
+            gdal.Warp(self.out_path, ds, **self.opts,
+                    callback=_progress)
+            # ✅ 关键：刷新缓存并关闭
+            out_ds = gdal.Open(self.out_path, gdal.GA_Update)
+            if out_ds:
+                out_ds.FlushCache()  # 强制写盘
+                out_ds = None 
+            self.progress.emit(100)       # 关闭数据集 
+            self.log.emit(f"✅ 合并完成：{self.out_path}")
+          
         except Exception as e:
             self.error.emit(f"合并失败: {str(e)}")
             self.error.emit(traceback.format_exc())
@@ -177,11 +282,21 @@ class MergerUI(QWidget):
         v.addWidget(QLabel("选择子数据集:"))
         v.addWidget(self.cb_subdataset)
 
+        # 1) 重叠区域融合方法
+        h_method = QHBoxLayout()
+        h_method.addWidget(QLabel('<font color="red">*</font>融合方法:'))
+        self.cb_method = QComboBox()
+        self.cb_method.addItems(["max", "min", "mean", "sum", "first", "last"])  
+        h_method.addWidget(self.cb_method)  
+        v.addLayout(h_method)
+
         # warp 选项
-        v.addWidget(QLabel('<font color="red">*</font>重采样算法:'))
+        h_warp = QHBoxLayout()
+        h_warp.addWidget(QLabel('重采样算法:'))
         self.cb_alg = QComboBox()
         self.cb_alg.addItems(["Average", "NearestNeighbour", "Bilinear", "Cubic", "CubicSpline", "Lanczos", "max", "min","Mode","Med","Q1","Q3","Sum"])
-        v.addWidget(self.cb_alg)
+        h_warp.addWidget(self.cb_alg)
+        v.addLayout(h_warp)
 
         # 输出像素类型
         v.addWidget(QLabel('<font color="red">*</font>输出像素类型:'))
@@ -400,7 +515,7 @@ class MergerUI(QWidget):
             temp_dir = os.path.join(os.path.dirname(in_dir), 'temp')
             os.makedirs(temp_dir, exist_ok=True)  # 如果目录已存在，不会抛出错误
             
-            self.worker = HDFMergeThread(files, out_file, opts, temp_dir, subdataset_index)
+            self.worker = HDFMergeThread(files, out_file, opts, temp_dir, subdataset_index,self.cb_method.currentText())
             self.worker.log.connect(self.log)
             self.worker.error.connect(self.error)
             self.worker.progress.connect(self.progress_bar.setValue)
@@ -408,7 +523,7 @@ class MergerUI(QWidget):
             self.worker.start()
             return
         
-        self.worker = MergeThread(files, out_file, opts)
+        self.worker = MergeThread(files, out_file, opts, self.cb_method.currentText())
         self.worker.log.connect(self.log)
         self.worker.error.connect(self.error)
         self.worker.progress.connect(self.progress_bar.setValue)
